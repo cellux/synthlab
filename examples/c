@@ -1,0 +1,26 @@
+#!/bin/bash
+
+NAME=$1
+
+if [ -z "$NAME" ]; then
+  echo "Usage: $(basename $0) <jack-client-name>"
+  exit 0
+fi
+
+pgrep -x kb || $HOME/Projects/kb/kb &
+pgrep -x $NAME || $HOME/Projects/dope/examples/build/$NAME &
+
+while ! jack_lsp | grep -F "$NAME:out"; do
+  sleep 1
+done
+
+jack_connect kb:out $NAME:midi_in
+jack_connect $NAME:out_0 system:playback_1
+jack_connect $NAME:out_0 system:playback_2
+
+trap "pkill -x $NAME; pkill -x kb; exit" INT TERM EXIT
+
+while true; do
+  sleep 3600
+done
+

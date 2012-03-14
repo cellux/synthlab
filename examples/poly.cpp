@@ -85,11 +85,17 @@ namespace sl {
 	std::fill_n(buffer, nframes, value);
       }
     }
-    void add(SampleCount offset, SampleCount size, SampleBufferTrunk &input) {
+    void add(SampleCount offset, SampleCount nframes, SampleBufferTrunk &input) {
       for (int i=0; i<SIZE; i++) {
 	Sample *src = input[i];
 	Sample *dst = buffers_[i];
-	std::transform(src,src+size,dst+offset,dst+offset,std::plus<Sample>());
+	std::transform(src,src+nframes,dst+offset,dst+offset,std::plus<Sample>());
+      }
+    }
+    void mul(SampleCount nframes, const Sample value) {
+      for (int i=0; i<SIZE; i++) {
+	Sample *buf = buffers_[i];
+	std::transform(buf,buf+nframes,buf,std::bind2nd(std::multiplies<Sample>(), value));
       }
     }
   };
@@ -323,6 +329,7 @@ public:
   }
   bool render(sl::SampleCount nframes, InputTrunk &input, OutputTrunk &output) {
     osc_.render(nframes, output);
+    output.mul(nframes, 0.2);
     return playing_;
   }
   void play(unsigned char midiNote, unsigned char midiVel) {

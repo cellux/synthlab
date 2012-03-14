@@ -1,5 +1,8 @@
 #!/bin/bash
 
+AUTO_START="$HOME/Projects/kb/kb"
+SYNTH_DIR="$HOME/Projects/dope/examples/build"
+
 NAME=$1
 
 if [ -z "$NAME" ]; then
@@ -7,18 +10,37 @@ if [ -z "$NAME" ]; then
   exit 0
 fi
 
-pgrep -x kb || $HOME/Projects/kb/kb &
-pgrep -x $NAME || $HOME/Projects/dope/examples/build/$NAME &
+if [ ! -x "$SYNTH_DIR/$NAME" ]; then
+  echo "Synth executable not found: $SYNTH_DIR/$NAME"
+  exit 1
+fi
 
-while ! jack_lsp | grep -F "$NAME:out"; do
+for prg in $AUTO_START; do
+  if ! pgrep -x $(basename $prg); then
+    echo "Starting $prg"
+    $prg &
+  else
+    echo "$prg: already running"
+  fi
+done
+
+if ! pgrep -x $NAME; then
+  echo "Starting synth: $SYNTH_DIR/$NAME"
+  $SYNTH_DIR/$NAME &
+fi
+
+echo -n "Waiting for synth to appear in jack... "
+while ! jack_lsp | grep -qF "$NAME:out"; do
   sleep 1
 done
+echo "ok."
 
 jack_connect kb:out $NAME:midi_in
 jack_connect $NAME:out_0 system:playback_1
 jack_connect $NAME:out_0 system:playback_2
 
-trap "pkill -x $NAME; pkill -x kb; exit" INT TERM EXIT
+trap "pkill -x $NAME; for prg in $AUTO_START; do pkill -x $(basename $prg); done; exit" INT TERM EXIT
+echo "Press CTRL+C to exit (and kill clients)"
 
 while true; do
   sleep 3600

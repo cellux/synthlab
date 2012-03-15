@@ -4,10 +4,11 @@
 #include <cassert>
 #include <cstdio>
 
-#include <algorithm>
-#include <functional>
+#include <vector>
 #include <string>
 #include <iostream>
+#include <algorithm>
+#include <functional>
 
 #include <jack/jack.h>
 #include <jack/midiport.h>
@@ -85,18 +86,37 @@ namespace sl {
 	std::fill_n(buffer, nframes, value);
       }
     }
-    void add(SampleCount offset, SampleCount nframes, SampleBufferTrunk &input) {
+    template <class BinaryOp>
+    void transform(SampleCount nframes,
+		   SampleBufferTrunk &input,
+		   BinaryOp op,
+		   SampleCount offset) {
       for (int i=0; i<SIZE; i++) {
 	Sample *src = input[i];
 	Sample *dst = buffers_[i];
-	std::transform(src,src+nframes,dst+offset,dst+offset,std::plus<Sample>());
+	std::transform(src,src+nframes,dst+offset,dst+offset,op);
       }
     }
-    void mul(SampleCount nframes, const Sample value) {
+    void add(SampleCount nframes, SampleBufferTrunk &input, SampleCount offset=0) {
+      transform(nframes, input, std::plus<Sample>(), offset);
+    }
+    void mul(SampleCount nframes, SampleBufferTrunk &input, SampleCount offset=0) {
+      transform(nframes, input, std::multiplies<Sample>(), offset);
+    }
+    template <class UnaryOp>
+    void transform(SampleCount nframes,
+		   UnaryOp op,
+		   SampleCount offset) {
       for (int i=0; i<SIZE; i++) {
 	Sample *buf = buffers_[i];
-	std::transform(buf,buf+nframes,buf,std::bind2nd(std::multiplies<Sample>(), value));
+	std::transform(buf+offset,buf+nframes,buf+offset,op);
       }
+    }
+    void add(SampleCount nframes, const Sample value, SampleCount offset=0) {
+      transform(nframes, std::bind2nd(std::plus<Sample>(), value), offset);
+    }
+    void mul(SampleCount nframes, const Sample value, SampleCount offset=0) {
+      transform(nframes, std::bind2nd(std::multiplies<Sample>(), value), offset);
     }
   };
 
@@ -248,13 +268,13 @@ namespace sl {
 	if (voiceInfo_[i].active) {
 	  SampleCount delay = voiceInfo_[i].delay;
 	  voiceInfo_[i].active = voices_[i].render(nframes-delay, input, o);
-	  output.add(delay, nframes-delay, o);
+	  output.add(nframes-delay, o, delay); // nframes, input, offset
 	  voiceInfo_[i].delay = 0;
 	}
       }
     }
     void noteOn(unsigned char midiNote, unsigned char midiVel, SampleCount delay) {
-      // std::cerr << "noteOn(" << int(midiNote) << ", " << int(midiVel) << ", " << delay << ")" << std::endl;
+      //std::cerr << "noteOn(" << int(midiNote) << ", " << int(midiVel) << ", " << delay << ")" << std::endl;
       for (int i=0; i<MAXVOICES; i++) {
 	if (voiceInfo_[i].active) continue;
 	voices_[i].play(midiNote, midiVel);
@@ -266,11 +286,11 @@ namespace sl {
       }
     }
     void noteOff(unsigned char midiNote, unsigned char midiVel, SampleCount delay) {
-      // std::cerr << "noteOff(" << int(midiNote) << ", " << int(midiVel) << ", " << delay << ")" << std::endl;
+      //std::cerr << "noteOff(" << int(midiNote) << ", " << int(midiVel) << ", " << delay << ")" << std::endl;
       for (int i=0; i<MAXVOICES; i++) {
 	if (! voiceInfo_[i].active) continue;
 	if (voiceInfo_[i].midiNote != midiNote) continue;
-	voices_[i].release();
+	voices_[i].release(delay);
       }
     }
     void start() {
@@ -313,6 +333,133 @@ namespace sl {
       phase_ = fmod(phase_, 2*M_PI);
     }
   };
+
+  class Env : public Generator<0,1> {
+    enum EnvCommandType {
+      SET,
+      SLIDE,
+      SUSTAIN
+    };
+    struct EnvCommand {
+      EnvCommandType type;
+      union {
+	struct {
+	  Sample value;
+	} set;
+	struct {
+	  Sample target;
+	  float time;
+	} slide;
+      };
+    };
+    typedef std::vector<EnvCommand> EnvCommandVec;
+    EnvCommandVec commands_;
+    EnvCommandVec::const_iterator ip_;
+    Sample value_;
+    Sample increment_;
+    Sample length_;
+  public:
+    class BadEnvCommandType {};
+
+    Env()
+      : commands_(),
+	ip_(commands_.begin()),
+	value_(0),
+	increment_(0),
+	length_(0)
+    {
+    }
+    static EnvCommand Set(Sample value) {
+      EnvCommand cmd;
+      cmd.type = SET;
+      cmd.set.value = value;
+      return cmd;
+    }
+    static EnvCommand Slide(Sample target, float time) {
+      EnvCommand cmd;
+      cmd.type = SLIDE;
+      cmd.slide.target = target;
+      cmd.slide.time = time;
+      return cmd;
+    }
+    static EnvCommand Sustain() {
+      EnvCommand cmd;
+      cmd.type = SUSTAIN;
+      return cmd;
+    }
+    bool render(sl::SampleCount nframes, OutputTrunk &output) {
+      Sample *buf = output[0];
+      if (length_ == -1) {
+	// sustained for the entire block
+	std::fill_n(buf,nframes,value_);
+	return true;
+      }
+      for (int i=0; i<nframes; i++) {
+      STEP:
+	if (length_ > 0) {
+	  buf[i] = value_;
+	  value_ += increment_;
+	  --length_;
+	}
+	else {
+	CMD:
+	  if (ip_ == commands_.end()) {
+	    std::fill(buf+i,buf+nframes,0);
+	    return false;
+	  }
+	  else {
+	    const EnvCommand &cmd = *ip_++;
+	    switch (cmd.type) {
+	    case SET:
+	      //std::cerr << "SET(" << cmd.set.value << ")" << std::endl;
+	      value_ = cmd.set.value;
+	      goto CMD;
+	    case SLIDE:
+	      //std::cerr << "SLIDE(" << cmd.slide.target << "," << cmd.slide.time << ")" << std::endl;
+	      length_ = sl::sampleRate()*cmd.slide.time;
+	      increment_ = (cmd.slide.target - value_) / length_;
+	      goto STEP;
+	    case SUSTAIN:
+	      //std::cerr << "SUSTAIN" << std::endl;
+	      length_ = -1;
+	      increment_ = 0;
+	      std::fill(buf+i,buf+nframes,value_);
+	      return true;
+	    default:
+	      throw BadEnvCommandType();
+	    }
+	  }
+	}
+      }
+      return true;
+    }
+    void add(EnvCommand cmd) {
+      commands_.push_back(cmd);
+    }
+    void play() {
+      ip_ = commands_.begin();
+      length_ = 0;
+      value_ = 0;
+      increment_ = 0;
+      length_ = 0;
+    }
+    void release(SampleCount delay) {
+      if (length_ == -1) {
+	length_ = delay;
+      }
+      else {
+	EnvCommandVec::const_iterator pos;
+	for (pos=ip_; pos != commands_.end(); ++pos) {
+	  const EnvCommand &cmd = *pos;
+	  if (cmd.type == SUSTAIN) break;
+	}
+	if (pos != commands_.end()) {
+	  ip_ = pos+1;
+	  length_ = delay;
+	}
+      }
+    }
+  };
 }
 
 float midi2cps(unsigned char midiNote) {
@@ -321,23 +468,36 @@ float midi2cps(unsigned char midiNote) {
 
 class Voice : public sl::Generator<0,1> {
   sl::SineOsc osc_;
+  sl::Env env_;
+  float gain_;
   bool playing_;
 public:
   Voice() :
+    gain_(0),
     playing_(false)
   {
+    env_.add(sl::Env::Set(0));
+    env_.add(sl::Env::Slide(1.0,0.2));
+    env_.add(sl::Env::Slide(0.7,0.1));
+    env_.add(sl::Env::Sustain());
+    env_.add(sl::Env::Slide(0.0,1.0));
   }
   bool render(sl::SampleCount nframes, InputTrunk &input, OutputTrunk &output) {
     osc_.render(nframes, output);
-    output.mul(nframes, 0.2);
+    output.mul(nframes, gain_);
+    OutputTrunk env_output;
+    playing_ = env_.render(nframes, env_output);
+    output.mul(nframes, env_output);
     return playing_;
   }
   void play(unsigned char midiNote, unsigned char midiVel) {
     osc_.play(midi2cps(midiNote));
+    env_.play();
+    gain_ = midiVel / 127.0;
     playing_ = true;
   }
-  void release() {
-    playing_ = false;
+  void release(sl::SampleCount delay) {
+    env_.release(delay);
   }
 };
 

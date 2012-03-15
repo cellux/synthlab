@@ -354,12 +354,15 @@ namespace sl {
   };
 
   class SineOsc : public Generator<0,1> {
+    static const float PERIOD;
+
     float freq_;
     float phase_;
+    float gain_;
     float step_;
 
     void calcStep() {
-      step_ = (2*M_PI) / (sl::sampleRate() / freq_);
+      step_ = PERIOD / (sl::sampleRate() / freq_);
     }
 
   public:
@@ -367,19 +370,22 @@ namespace sl {
       freq_ = freq;
       calcStep();
     }
-    void play(float freq) {
+    void play(float freq, float gain=1, float phase=0) {
       setFreq(freq);
-      phase_ = 0;
+      gain_ = gain;
+      phase_ = PERIOD*phase;
     }
     void render(SampleCount nframes, OutputTrunk &output) {
       Sample *buf = output[0];
       for (int i=0; i<nframes; i++) {
-	*buf++ = sin(phase_);
+	*buf++ = gain_*sin(phase_);
 	phase_ += step_;
       }
-      phase_ = fmod(phase_, 2*M_PI);
+      phase_ = fmod(phase_, PERIOD);
     }
   };
+
+  const float SineOsc::PERIOD = 2*M_PI;
 
   class Env : public Generator<0,1> {
     enum EnvCommandType {

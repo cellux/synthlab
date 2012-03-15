@@ -323,12 +323,13 @@ namespace sl {
     void noteOn(unsigned char midiNote, unsigned char midiVel, SampleCount delay) {
       //std::cerr << "noteOn(" << int(midiNote) << ", " << int(midiVel) << ", " << delay << ")" << std::endl;
       for (int i=0; i<MAXVOICES; i++) {
-	if (voiceInfo_[i].active) continue;
+	if (voiceInfo_[i].active && voiceInfo_[i].midiNote != midiNote) continue;
 	voices_[i].play(midiNote, midiVel);
 	voiceInfo_[i].midiNote = midiNote;
 	voiceInfo_[i].midiVel = midiVel;
 	voiceInfo_[i].delay = delay;
 	voiceInfo_[i].active = true;
+	//std::cerr << "activated voice #" << i << std::endl;
 	break;
       }
     }
@@ -338,6 +339,7 @@ namespace sl {
 	if (! voiceInfo_[i].active) continue;
 	if (voiceInfo_[i].midiNote != midiNote) continue;
 	voices_[i].release(delay);
+	//std::cerr << "released voice #" << i << std::endl;
 	break;
       }
     }
@@ -474,7 +476,7 @@ namespace sl {
 	      increment_ = (cmd.slide.target - value_) / length_;
 	      goto STEP;
 	    case SUSTAIN:
-	      //std::cerr << "SUSTAIN" << std::endl;
+	      //std::cerr << "SUSTAIN:" << value_ << std::endl;
 	      length_ = -1;
 	      increment_ = 0;
 	      std::fill(buf+i,buf+nframes,value_);

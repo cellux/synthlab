@@ -30,6 +30,17 @@ namespace sl {
     return bs_;
   }
 
+  template <class T> struct AbsCmp : std::binary_function<T,T,T> {
+    T operator() (const T& x, const T& y) const {
+      return (fabs(x) < fabs(y));
+    }
+  };
+
+  template <class Iter>
+  Sample peakAmplitude(Iter first, Iter last) {
+    return fabs(*std::max_element(first, last, AbsCmp<Sample>()));
+  }
+
   class SampleBufferAllocator {
     class HeapOverFlowError {};
     static const int HEAPSIZE = 65536;

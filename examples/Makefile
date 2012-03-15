@@ -1,6 +1,6 @@
 VPATH = build
 
-CPPFLAGS = -O3
+CPPFLAGS = -O3 -I../include
 LDFLAGS = -ljack
 
 sources := $(wildcard *.cpp)
@@ -10,4 +10,3 @@ ALL: $(sources:.cpp=)
 
 %: %.cpp
 	$(CXX) $(CPPFLAGS) -o build/$@ $(LDFLAGS) $<
-

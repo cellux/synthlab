@@ -254,11 +254,11 @@ namespace sl {
       midiInPort_ = jack_port_register(client_, "midi_in", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
       char portName[64];
       for (int i=0; i<Synth::InputTrunk::numChannels; i++) {
-	snprintf(portName, sizeof(portName), "in_%u", i);
+	snprintf(portName, sizeof(portName), "in_%u", i+1);
 	inputPorts_[i] = jack_port_register(client_, portName, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0);
       }
       for (int i=0; i<Synth::OutputTrunk::numChannels; i++) {
-	snprintf(portName, sizeof(portName), "out_%u", i);
+	snprintf(portName, sizeof(portName), "out_%u", i+1);
 	outputPorts_[i] = jack_port_register(client_, portName, JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
       }
     }
@@ -338,6 +338,7 @@ namespace sl {
 	if (! voiceInfo_[i].active) continue;
 	if (voiceInfo_[i].midiNote != midiNote) continue;
 	voices_[i].release(delay);
+	break;
       }
     }
     void start() {

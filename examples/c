@@ -36,8 +36,8 @@ done
 echo "ok."
 
 jack_connect kb:out $NAME:midi_in
-jack_connect $NAME:out_0 system:playback_1
-jack_connect $NAME:out_0 system:playback_2
+jack_connect $NAME:out_1 system:playback_1
+jack_connect $NAME:out_1 system:playback_2
 
 trap "echo 'Killing $NAME'; pkill -x $NAME; for prg in $AUTO_START; do echo 'Killing $prg'; pkill -x $(basename $prg); done; exit" INT TERM
 echo "Press CTRL+C to exit (and kill clients)"

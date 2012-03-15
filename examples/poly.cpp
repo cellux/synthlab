@@ -9,6 +9,7 @@
 #include <iostream>
 #include <algorithm>
 #include <functional>
+#include <numeric>
 
 #include <jack/jack.h>
 #include <jack/midiport.h>
@@ -39,6 +40,27 @@ namespace sl {
   template <class Iter>
   Sample peakAmplitude(Iter first, Iter last) {
     return fabs(*std::max_element(first, last, AbsCmp<Sample>()));
+  }
+
+  template <class T> struct MeanPowerAcc : std::binary_function<T,T,T> {
+    T operator() (const T& x, const T& y) const {
+      return x+y*y;
+    }
+  };
+
+  template <class Iter>
+  Sample meanPower(Iter first, Iter last) {
+    if (first == last) {
+      return 0;
+    }
+    else {
+      return std::accumulate(first, last, 0, MeanPowerAcc<Sample>())/(last-first);
+    }
+  }
+
+  template <class Iter>
+  Sample rmsAmplitude(Iter first, Iter last) {
+    return sqrt(meanPower(first, last));
   }
 
   class SampleBufferAllocator {

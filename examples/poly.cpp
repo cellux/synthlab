@@ -63,6 +63,12 @@ namespace sl {
     return sqrt(meanPower(first, last));
   }
 
+  const float dbRefAmplitude = 0.00001;
+
+  float amp2db(float amp) {
+    return 20*log10(amp/dbRefAmplitude);
+  }
+
   class SampleBufferAllocator {
     class HeapOverFlowError {};
     static const int HEAPSIZE = 65536;
@@ -496,7 +502,11 @@ namespace sl {
 }
 
 float midi2cps(unsigned char midiNote) {
-  return 440.0 * exp(log(2.0)*((midiNote-69)/12.0));
+  return 440.0 * pow(2.0, (midiNote-69)/12.0);
+}
+
+unsigned char cps2midi(float cps) {
+  return 69 + 12*log2(cps/440);
 }
 
 class Voice : public sl::Generator<0,1> {

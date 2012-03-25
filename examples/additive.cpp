@@ -1,4 +1,4 @@
-#include <dope/sl.h>
+#include <synthlab.h>
 
 template <int NUMOSC>
 class Voice : public sl::Generator<0,1> {

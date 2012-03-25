@@ -1,4 +1,4 @@
-#include <dope/sl.h>
+#include <synthlab.h>
 
 class Voice : public sl::Generator<0,1> {
   sl::SineOsc osc_;

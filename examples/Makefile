@@ -8,5 +8,5 @@ sources := $(wildcard *.cpp)
 .PHONY: ALL
 ALL: $(sources:.cpp=)
 
-%: %.cpp ../include/dope/sl.h
+%: %.cpp ../include/synthlab.h
 	$(CXX) $(CPPFLAGS) -o build/$@ $(LDFLAGS) $<

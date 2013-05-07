@@ -11,7 +11,7 @@ struct VoiceData {
     env.add(sl::Env::Slide(0.0,1.0));
   }
   void cc(int num, int value) {
-    std::cout << "num=" << num << ", value=" << value << "\n";
+    //std::cout << "num=" << num << ", value=" << value << "\n";
     switch (num) {
     case 1:
       // attack time
@@ -37,39 +37,38 @@ struct VoiceData {
   }
 };
 
-class Voice : public sl::Generator<0,1> {
+class Voice : public sl::Gen<0,2,VoiceData> {
   sl::SineOsc osc_;
   sl::Env env_;
   float gain_;
   float basefreq_;
   float pb_;
 public:
-  Voice() :
-    gain_(0), basefreq_(220), pb_(1)
-  {
-  }
-  bool render(const VoiceData& voicedata, int nframes, InputTrunk &input, OutputTrunk &output) {
-    if (pb_ != voicedata.pb) {
-      pb_ = voicedata.pb;
-      osc_.setFreq(basefreq_ * pb_);
-    }
-    osc_.render(nframes, output);
-    output.mul(nframes, gain_);
-    OutputTrunk env_output;
-    bool playing = env_.render(nframes, env_output);
-    output.mul(nframes, env_output);
-    return playing;
-  }
-  void play(const VoiceData& voicedata, int midiNote, int midiVel) {
+  void play(int midiNote, int midiVel) {
     // each voice gets its own copy of the shared env
     //
     // => control changes don't affect voices already playing
-    env_ = voicedata.env;
+    env_ = data_->env;
     basefreq_ = sl::midi2cps(midiNote);
-    pb_ = voicedata.pb;
+    pb_ = data_->pb;
     osc_.play(basefreq_ * pb_);
     env_.play();
     gain_ = midiVel / 127.0;
+  }
+  bool render(int nframes, OutputBuffer &output, InputBuffer &input) {
+    if (pb_ != data_->pb) {
+      pb_ = data_->pb;
+      osc_.setFreq(basefreq_ * pb_);
+    }
+    sl::SampleBuffer<1> osc_output;
+    osc_.render(nframes, osc_output[0]);
+    osc_output.mul(nframes, gain_);
+    sl::SampleBuffer<1> env_output;
+    bool playing = env_.render(nframes, env_output[0]);
+    osc_output.mul(nframes, env_output);
+    std::copy(osc_output[0], osc_output[0]+nframes, output[0]);
+    std::copy(osc_output[0], osc_output[0]+nframes, output[1]);
+    return playing;
   }
   void release(int delay) {
     env_.release(delay);
@@ -77,7 +76,7 @@ public:
 };
 
 int main(int argc, char **argv) {
-  sl::PolySynth<Voice, VoiceData> synth("poly");
+  sl::PolySynth<Voice> synth("poly");
   synth.start();
   getchar();
 }

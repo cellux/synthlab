@@ -32,7 +32,7 @@ namespace sl {
   }
 
   template <class T> struct AbsCmp : std::binary_function<T,T,T> {
-    T operator() (const T& x, const T& y) const {
+    T operator() (const T &x, const T &y) const {
       return (fabs(x) < fabs(y));
     }
   };
@@ -44,7 +44,7 @@ namespace sl {
   }
 
   template <class T> struct MeanPowerAcc : std::binary_function<T,T,T> {
-    T operator() (const T& x, const T& y) const {
+    T operator() (const T &x, const T &y) const {
       return x+y*y;
     }
   };
@@ -83,16 +83,16 @@ namespace sl {
     class HeapOverFlowError {};
     // increase HEAPSIZE if you get HeapOverFlowError
     static const int HEAPSIZE = 65536;
-    static Sample* heap;
-    static Sample* pos;
-    static Sample* end;
+    static Sample *heap;
+    static Sample *pos;
+    static Sample *end;
   public:
     static Sample* allocate(int nframes) {
       assert(heap != 0);
       if ((pos+nframes) > end) {
 	throw HeapOverFlowError();
       }
-      Sample* here = pos;
+      Sample *here = pos;
       pos += nframes;
       return here;
     }
@@ -109,57 +109,53 @@ namespace sl {
   Sample* SampleBufferAllocator::pos = 0;
   Sample* SampleBufferAllocator::end = 0;
 
+  template <int NCHANNELS>
   class SampleBuffer {
-    Sample *buffer_;
+    Sample *buffers_;
+    int stride_;
   public:
+    static const int nChannels = NCHANNELS;
     SampleBuffer() :
-      buffer_(SampleBufferAllocator::allocate(sl::bufferSize())) {}
-    Sample& operator[](const int i) {
-      return buffer_[i];
-    }
-    operator Sample*() {
-      return buffer_;
-    }
-  };
-
-  template <int SIZE>
-  class SampleBufferTrunk {
-    SampleBuffer buffers_[SIZE];
-  public:
-    static const int numChannels = SIZE;
-    SampleBuffer& operator[](const int i) {
-      return buffers_[i];
+      stride_(sl::bufferSize()),
+      buffers_(SampleBufferAllocator::allocate(stride_*NCHANNELS)) {}
+    Sample* operator[](const int i) {
+      return buffers_+stride_*i;
     }
     void fill(int nframes, Sample value) {
-      for (int i=0; i<SIZE; i++) {
-	Sample *buffer = buffers_[i];
-	std::fill_n(buffer, nframes, value);
+      Sample *dst = buffers_;
+      for (int i=0; i<NCHANNELS; i++) {
+	std::fill_n(dst, nframes, value);
+	dst += stride_;
       }
     }
     template <class BinaryOp>
     void transform(int nframes,
-		   SampleBufferTrunk &input,
+		   SampleBuffer &input,
 		   BinaryOp op,
-		   int offset) {
-      for (int i=0; i<SIZE; i++) {
+		   int offset)
+    {
+      Sample *dst = buffers_;
+      for (int i=0; i<NCHANNELS; i++) {
 	Sample *src = input[i];
-	Sample *dst = buffers_[i];
 	std::transform(src,src+nframes,dst+offset,dst+offset,op);
+	dst += stride_;
       }
     }
-    void add(int nframes, SampleBufferTrunk &input, int offset=0) {
+    void add(int nframes, SampleBuffer &input, int offset=0) {
       transform(nframes, input, std::plus<Sample>(), offset);
     }
-    void mul(int nframes, SampleBufferTrunk &input, int offset=0) {
+    void mul(int nframes, SampleBuffer &input, int offset=0) {
       transform(nframes, input, std::multiplies<Sample>(), offset);
     }
     template <class UnaryOp>
     void transform(int nframes,
 		   UnaryOp op,
-		   int offset) {
-      for (int i=0; i<SIZE; i++) {
-	Sample *buf = buffers_[i];
-	std::transform(buf+offset,buf+nframes,buf+offset,op);
+		   int offset)
+    {
+      Sample *dst = buffers_;
+      for (int i=0; i<NCHANNELS; i++) {
+	std::transform(dst+offset,dst+nframes,dst+offset,op);
+	dst += stride_;
       }
     }
     void add(int nframes, const Sample value, int offset=0) {
@@ -170,19 +166,28 @@ namespace sl {
     }
   };
 
-  template <int NUMINPUTS, int NUMOUTPUTS>
-  class Generator {
+  class NoData {
   public:
-    typedef SampleBufferTrunk<NUMINPUTS> InputTrunk;
-    typedef SampleBufferTrunk<NUMOUTPUTS> OutputTrunk;
+    void cc(int num, int value) {}
+  };
+
+  template <int NUMINPUTS, int NUMOUTPUTS, class GenData=NoData>
+  class Gen {
+  protected:
+    GenData *data_;
+  public:
+    typedef GenData Data;
+    void data(GenData *data) { data_ = data; }
+    typedef SampleBuffer<NUMINPUTS> InputBuffer;
+    typedef SampleBuffer<NUMOUTPUTS> OutputBuffer;
   };
 
   template <class Synth>
   class JackAudioProvider {
     jack_client_t *client_;
     jack_port_t* midiInPort_;
-    jack_port_t* inputPorts_[Synth::InputTrunk::numChannels];
-    jack_port_t* outputPorts_[Synth::OutputTrunk::numChannels];
+    jack_port_t* inputPorts_[Synth::InputBuffer::nChannels];
+    jack_port_t* outputPorts_[Synth::OutputBuffer::nChannels];
     Synth* synth_;
     unsigned char midiCtrlMap_[128];
 
@@ -200,9 +205,9 @@ namespace sl {
       JackAudioProvider *jap = static_cast<JackAudioProvider*>(arg);
       Synth *synth = jap->synth_;
       SampleBufferAllocator::reset();
-      typename Synth::InputTrunk input;
-      typename Synth::OutputTrunk output;
-      for (int i=0; i<Synth::InputTrunk::numChannels; i++) {
+      typename Synth::InputBuffer input;
+      typename Synth::OutputBuffer output;
+      for (int i=0; i<Synth::InputBuffer::nChannels; i++) {
 	jack_default_audio_sample_t *in = (jack_default_audio_sample_t*) jack_port_get_buffer(jap->inputPorts_[i], nframes);
 	Sample *buf = input[i];
 	std::copy(in,in+nframes,buf);
@@ -230,13 +235,13 @@ namespace sl {
             break;
           case 0xe0:
             // pitch bend
-            synth->controlChange(128, midiValue1 + midiValue2<<7);
+            synth->controlChange(128, midiValue1 | (midiValue2<<7));
             break;
 	  }
 	}
       }
-      synth->render(nframes, input, output);
-      for (int i=0; i<Synth::OutputTrunk::numChannels; i++) {
+      synth->render(nframes, output, input);
+      for (int i=0; i<Synth::OutputBuffer::nChannels; i++) {
 	jack_default_audio_sample_t *out = (jack_default_audio_sample_t*) jack_port_get_buffer(jap->outputPorts_[i], nframes);
 	Sample *buf = output[i];
 	std::copy(buf,buf+nframes,out);
@@ -265,11 +270,11 @@ namespace sl {
       jack_set_process_callback(client_, jackProcessCallback, this);
       midiInPort_ = jack_port_register(client_, "midi_in", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
       char portName[64];
-      for (int i=0; i<Synth::InputTrunk::numChannels; i++) {
+      for (int i=0; i<Synth::InputBuffer::nChannels; i++) {
 	snprintf(portName, sizeof(portName), "in_%u", i+1);
 	inputPorts_[i] = jack_port_register(client_, portName, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0);
       }
-      for (int i=0; i<Synth::OutputTrunk::numChannels; i++) {
+      for (int i=0; i<Synth::OutputBuffer::nChannels; i++) {
 	snprintf(portName, sizeof(portName), "out_%u", i+1);
 	outputPorts_[i] = jack_port_register(client_, portName, JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
       }
@@ -320,27 +325,30 @@ namespace sl {
   };
 
   template <class Voice,
-            class VoiceData,
 	    int MAXVOICES=16,
 	    template <class Synth> class AudioProvider = JackAudioProvider>
   class PolySynth {
   public:
-    typedef typename Voice::InputTrunk InputTrunk;
-    typedef typename Voice::OutputTrunk OutputTrunk;
+    typedef typename Voice::InputBuffer InputBuffer;
+    typedef typename Voice::OutputBuffer OutputBuffer;
+    typedef typename Voice::Data VoiceData;
     PolySynth(const std::string &name)
       : audioProvider_(this, name)
     {
+      for (int i=0; i<MAXVOICES; i++) {
+	voices_[i].data(&voiceData_);
+      }
     }
     ~PolySynth() {
       stop();
     }
-    void render(int nframes, InputTrunk &input, OutputTrunk &output) {
+    void render(int nframes, OutputBuffer &output, InputBuffer &input) {
       output.fill(nframes, 0);
-      OutputTrunk o;
+      OutputBuffer o;
       for (int i=0; i<MAXVOICES; i++) {
 	if (voiceInfo_[i].status != VS_INACTIVE) {
 	  int delay = voiceInfo_[i].delay;
-	  bool voiceStillActive = voices_[i].render(voicedata_, nframes-delay, input, o);
+	  bool voiceStillActive = voices_[i].render(nframes-delay, o, input);
           if (! voiceStillActive) {
             voiceInfo_[i].status = VS_INACTIVE;
           }
@@ -359,7 +367,7 @@ namespace sl {
         }
       }
       if (inactive >= 0) {
-	voices_[inactive].play(voicedata_, midiNote, midiVel);
+	voices_[inactive].play(midiNote, midiVel);
 	voiceInfo_[inactive].midiNote = midiNote;
 	voiceInfo_[inactive].midiVel = midiVel;
 	voiceInfo_[inactive].delay = delay;
@@ -376,7 +384,7 @@ namespace sl {
       }
     }
     void controlChange(int num, int value) {
-      voicedata_.cc(num, value);
+      voiceData_.cc(num, value);
     }
     void start() {
       audioProvider_.start();
@@ -387,12 +395,12 @@ namespace sl {
 
   private:
     Voice voices_[MAXVOICES];
-    VoiceData voicedata_;
     VoiceInfo voiceInfo_[MAXVOICES];
+    VoiceData voiceData_;
     AudioProvider<PolySynth> audioProvider_;
   };
 
-  class SineOsc : public Generator<0,1> {
+  class SineOsc : public Gen<0,1> {
     static const float PERIOD;
 
     float freq_;
@@ -414,10 +422,9 @@ namespace sl {
       gain_ = gain;
       phase_ = PERIOD*phase; // phase must be in [0,1]
     }
-    void render(int nframes, OutputTrunk &output, int channel=0) {
-      Sample *buf = output[channel];
+    void render(int nframes, Sample *output) {
       for (int i=0; i<nframes; i++) {
-	*buf++ = gain_*sin(phase_);
+	*output++ = gain_*sin(phase_);
 	phase_ += step_;
       }
       phase_ = fmod(phase_, PERIOD);
@@ -426,7 +433,7 @@ namespace sl {
 
   const float SineOsc::PERIOD = 2*M_PI;
 
-  class Env : public Generator<0,1> {
+  class Env : public Gen<0,1> {
     enum EnvCommandType {
       SET,
       SLIDE,
@@ -488,24 +495,23 @@ namespace sl {
       cmd.type = SUSTAIN;
       return cmd;
     }
-    bool render(int nframes, OutputTrunk &output, int channel=0) {
-      Sample *buf = output[channel];
+    bool render(int nframes, Sample *output) {
       if (length_ == -1) {
 	// sustained for the entire block
-	std::fill_n(buf,nframes,value_);
+	std::fill_n(output,nframes,value_);
 	return true;
       }
       for (int i=0; i<nframes; i++) {
       STEP:
 	if (length_ > 0) {
-	  buf[i] = value_;
+	  output[i] = value_;
 	  value_ += increment_;
 	  --length_;
 	}
 	else {
 	CMD:
 	  if (ip_ == commands_.end()) {
-	    std::fill(buf+i,buf+nframes,0);
+	    std::fill(output+i,output+nframes,0);
 	    return false;
 	  }
 	  else {
@@ -521,7 +527,7 @@ namespace sl {
 	    case SUSTAIN:
 	      length_ = -1;
 	      increment_ = 0;
-	      std::fill(buf+i,buf+nframes,value_);
+	      std::fill(output+i,output+nframes,value_);
 	      return true;
 	    default:
 	      throw BadEnvCommandType();
@@ -564,7 +570,7 @@ namespace sl {
     EnvCommand& operator[](const int i) {
       return commands_[i];
     }
-    Env& operator=(const Env& other) {
+    Env& operator=(const Env &other) {
       if (this != &other) {
         commands_ = other.commands_;
       }

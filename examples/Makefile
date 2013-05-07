@@ -9,6 +9,7 @@ sources := $(wildcard *.cpp)
 ALL: $(sources:.cpp=)
 
 %: %.cpp ../include/synthlab.hpp
+	mkdir -p build
 	$(CXX) $(CPPFLAGS) -o build/$@ $(LDFLAGS) $<
 
 .PHONY: clean

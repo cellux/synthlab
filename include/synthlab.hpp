@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <unistd.h>
 
 #include <cmath>
@@ -17,7 +18,6 @@
 namespace sl {
 
   typedef float Sample;
-  typedef int SampleCount;
 
   inline int sampleRate(int sr = 0) {
     static int sr_ = 0;
@@ -39,7 +39,8 @@ namespace sl {
 
   template <class Iter>
   Sample peakAmplitude(Iter first, Iter last) {
-    return fabs(*std::max_element(first, last, AbsCmp<Sample>()));
+    typedef typename std::iterator_traits<Iter>::value_type value_type;
+    return fabs(*std::max_element(first, last, AbsCmp<value_type>()));
   }
 
   template <class T> struct MeanPowerAcc : std::binary_function<T,T,T> {
@@ -50,11 +51,12 @@ namespace sl {
 
   template <class Iter>
   Sample meanPower(Iter first, Iter last) {
+    typedef typename std::iterator_traits<Iter>::value_type value_type;
     if (first == last) {
       return 0;
     }
     else {
-      return std::accumulate(first, last, 0, MeanPowerAcc<Sample>())/(last-first);
+      return std::accumulate(first, last, 0, MeanPowerAcc<value_type>())/(last-first);
     }
   }
 
@@ -79,6 +81,7 @@ namespace sl {
 
   class SampleBufferAllocator {
     class HeapOverFlowError {};
+    // increase HEAPSIZE if you get HeapOverFlowError
     static const int HEAPSIZE = 65536;
     static Sample* heap;
     static Sample* pos;
@@ -127,42 +130,42 @@ namespace sl {
     SampleBuffer& operator[](const int i) {
       return buffers_[i];
     }
-    void fill(SampleCount nframes, Sample value) {
+    void fill(int nframes, Sample value) {
       for (int i=0; i<SIZE; i++) {
 	Sample *buffer = buffers_[i];
 	std::fill_n(buffer, nframes, value);
       }
     }
     template <class BinaryOp>
-    void transform(SampleCount nframes,
+    void transform(int nframes,
 		   SampleBufferTrunk &input,
 		   BinaryOp op,
-		   SampleCount offset) {
+		   int offset) {
       for (int i=0; i<SIZE; i++) {
 	Sample *src = input[i];
 	Sample *dst = buffers_[i];
 	std::transform(src,src+nframes,dst+offset,dst+offset,op);
       }
     }
-    void add(SampleCount nframes, SampleBufferTrunk &input, SampleCount offset=0) {
+    void add(int nframes, SampleBufferTrunk &input, int offset=0) {
       transform(nframes, input, std::plus<Sample>(), offset);
     }
-    void mul(SampleCount nframes, SampleBufferTrunk &input, SampleCount offset=0) {
+    void mul(int nframes, SampleBufferTrunk &input, int offset=0) {
       transform(nframes, input, std::multiplies<Sample>(), offset);
     }
     template <class UnaryOp>
-    void transform(SampleCount nframes,
+    void transform(int nframes,
 		   UnaryOp op,
-		   SampleCount offset) {
+		   int offset) {
       for (int i=0; i<SIZE; i++) {
 	Sample *buf = buffers_[i];
 	std::transform(buf+offset,buf+nframes,buf+offset,op);
       }
     }
-    void add(SampleCount nframes, const Sample value, SampleCount offset=0) {
+    void add(int nframes, const Sample value, int offset=0) {
       transform(nframes, std::bind2nd(std::plus<Sample>(), value), offset);
     }
-    void mul(SampleCount nframes, const Sample value, SampleCount offset=0) {
+    void mul(int nframes, const Sample value, int offset=0) {
       transform(nframes, std::bind2nd(std::multiplies<Sample>(), value), offset);
     }
   };
@@ -181,6 +184,7 @@ namespace sl {
     jack_port_t* inputPorts_[Synth::InputTrunk::numChannels];
     jack_port_t* outputPorts_[Synth::OutputTrunk::numChannels];
     Synth* synth_;
+    unsigned char midiCtrlMap_[128];
 
     static int jackSampleRateCallback(jack_nframes_t sr, void *arg) {
       sl::sampleRate(sr);
@@ -209,17 +213,25 @@ namespace sl {
       for (int i=0; i<midiEventCount; i++) {
 	jack_midi_event_get(&midiEvent, midiBuf, i);
 	unsigned char midiCommand = *(midiEvent.buffer) & 0xf0;
+        //std::cout << "got midi command: " << int(midiCommand) << "\n";
 	if (midiEvent.size > 2) {
-	  unsigned char midiNote = *(midiEvent.buffer+1);
-	  unsigned char midiVel = *(midiEvent.buffer+2);
-	  SampleCount delay = midiEvent.time;
+	  unsigned char midiValue1 = *(midiEvent.buffer+1);
+	  unsigned char midiValue2 = *(midiEvent.buffer+2);
+	  int delay = midiEvent.time;
 	  switch (midiCommand) {
-	  case 0x90:
-	    synth->noteOn(midiNote, midiVel, delay);
-	    break;
 	  case 0x80:
-	    synth->noteOff(midiNote, midiVel, delay);
+	    synth->noteOff(midiValue1, midiValue2, delay);
 	    break;
+	  case 0x90:
+	    synth->noteOn(midiValue1, midiValue2, delay);
+	    break;
+          case 0xb0:
+            synth->controlChange(jap->midiCtrlMap_[midiValue1], midiValue2);
+            break;
+          case 0xe0:
+            // pitch bend
+            synth->controlChange(128, midiValue1 + midiValue2<<7);
+            break;
 	  }
 	}
       }
@@ -261,6 +273,13 @@ namespace sl {
 	snprintf(portName, sizeof(portName), "out_%u", i+1);
 	outputPorts_[i] = jack_port_register(client_, portName, JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
       }
+      for (int i=0; i<128; i++) {
+        midiCtrlMap_[i] = i;
+      }
+      for (int i=11; i<=19; i++) {
+        midiCtrlMap_[i] = i-10;
+      }
+      midiCtrlMap_[1] = 129; // modwheel
     }
 
     ~JackAudioProvider() {
@@ -282,19 +301,26 @@ namespace sl {
     }
   };
 
+  enum VoiceStatus {
+    VS_PLAYING,
+    VS_RELEASING,
+    VS_INACTIVE
+  };
+
   struct VoiceInfo {
-    bool active;
-    SampleCount delay;
+    VoiceStatus status;
+    int delay;
     unsigned char midiNote;
     unsigned char midiVel;
     VoiceInfo()
-      : active(false),
+      : status(VS_INACTIVE),
 	delay(0),
 	midiNote(0),
 	midiVel(0) {}
   };
 
   template <class Voice,
+            class VoiceData,
 	    int MAXVOICES=16,
 	    template <class Synth> class AudioProvider = JackAudioProvider>
   class PolySynth {
@@ -308,40 +334,49 @@ namespace sl {
     ~PolySynth() {
       stop();
     }
-    void render(SampleCount nframes, InputTrunk &input, OutputTrunk &output) {
+    void render(int nframes, InputTrunk &input, OutputTrunk &output) {
       output.fill(nframes, 0);
       OutputTrunk o;
       for (int i=0; i<MAXVOICES; i++) {
-	if (voiceInfo_[i].active) {
-	  SampleCount delay = voiceInfo_[i].delay;
-	  voiceInfo_[i].active = voices_[i].render(nframes-delay, input, o);
+	if (voiceInfo_[i].status != VS_INACTIVE) {
+	  int delay = voiceInfo_[i].delay;
+	  bool voiceStillActive = voices_[i].render(voicedata_, nframes-delay, input, o);
+          if (! voiceStillActive) {
+            voiceInfo_[i].status = VS_INACTIVE;
+          }
 	  output.add(nframes-delay, o, delay); // nframes, input, offset
 	  voiceInfo_[i].delay = 0;
 	}
       }
     }
-    void noteOn(unsigned char midiNote, unsigned char midiVel, SampleCount delay) {
-      //std::cerr << "noteOn(" << int(midiNote) << ", " << int(midiVel) << ", " << delay << ")" << std::endl;
+    void noteOn(int midiNote, int midiVel, int delay) {
+      int inactive = -1;
       for (int i=0; i<MAXVOICES; i++) {
-	if (voiceInfo_[i].active && voiceInfo_[i].midiNote != midiNote) continue;
-	voices_[i].play(midiNote, midiVel);
-	voiceInfo_[i].midiNote = midiNote;
-	voiceInfo_[i].midiVel = midiVel;
-	voiceInfo_[i].delay = delay;
-	voiceInfo_[i].active = true;
-	//std::cerr << "activated voice #" << i << std::endl;
+        if (inactive == -1 && voiceInfo_[i].status == VS_INACTIVE) inactive = i;
+        if (voiceInfo_[i].midiNote == midiNote && voiceInfo_[i].status == VS_PLAYING) {
+          voices_[i].release(delay);
+          voiceInfo_[i].status = VS_RELEASING;
+        }
+      }
+      if (inactive >= 0) {
+	voices_[inactive].play(voicedata_, midiNote, midiVel);
+	voiceInfo_[inactive].midiNote = midiNote;
+	voiceInfo_[inactive].midiVel = midiVel;
+	voiceInfo_[inactive].delay = delay;
+	voiceInfo_[inactive].status = VS_PLAYING;
+      }
+    }
+    void noteOff(int midiNote, int midiVel, int delay) {
+      for (int i=0; i<MAXVOICES; i++) {
+	if (voiceInfo_[i].status != VS_PLAYING) continue;
+	if (voiceInfo_[i].midiNote != midiNote) continue;
+	voices_[i].release(delay);
+        voiceInfo_[i].status = VS_RELEASING;
 	break;
       }
     }
-    void noteOff(unsigned char midiNote, unsigned char midiVel, SampleCount delay) {
-      //std::cerr << "noteOff(" << int(midiNote) << ", " << int(midiVel) << ", " << delay << ")" << std::endl;
-      for (int i=0; i<MAXVOICES; i++) {
-	if (! voiceInfo_[i].active) continue;
-	if (voiceInfo_[i].midiNote != midiNote) continue;
-	voices_[i].release(delay);
-	//std::cerr << "released voice #" << i << std::endl;
-	break;
-      }
+    void controlChange(int num, int value) {
+      voicedata_.cc(num, value);
     }
     void start() {
       audioProvider_.start();
@@ -352,6 +387,7 @@ namespace sl {
 
   private:
     Voice voices_[MAXVOICES];
+    VoiceData voicedata_;
     VoiceInfo voiceInfo_[MAXVOICES];
     AudioProvider<PolySynth> audioProvider_;
   };
@@ -376,10 +412,10 @@ namespace sl {
     void play(float freq, float gain=1, float phase=0) {
       setFreq(freq);
       gain_ = gain;
-      phase_ = PERIOD*phase;
+      phase_ = PERIOD*phase; // phase must be in [0,1]
     }
-    void render(SampleCount nframes, OutputTrunk &output) {
-      Sample *buf = output[0];
+    void render(int nframes, OutputTrunk &output, int channel=0) {
+      Sample *buf = output[channel];
       for (int i=0; i<nframes; i++) {
 	*buf++ = gain_*sin(phase_);
 	phase_ += step_;
@@ -407,6 +443,15 @@ namespace sl {
 	  float time;
 	} slide;
       };
+      void setValue(Sample value) {
+        set.value = value;
+      }
+      void setTarget(Sample target) {
+        slide.target = target;
+      }
+      void setTime(float time) {
+        slide.time = time;
+      }
     };
     typedef std::vector<EnvCommand> EnvCommandVec;
     EnvCommandVec commands_;
@@ -443,8 +488,8 @@ namespace sl {
       cmd.type = SUSTAIN;
       return cmd;
     }
-    bool render(sl::SampleCount nframes, OutputTrunk &output) {
-      Sample *buf = output[0];
+    bool render(int nframes, OutputTrunk &output, int channel=0) {
+      Sample *buf = output[channel];
       if (length_ == -1) {
 	// sustained for the entire block
 	std::fill_n(buf,nframes,value_);
@@ -467,16 +512,13 @@ namespace sl {
 	    const EnvCommand &cmd = *ip_++;
 	    switch (cmd.type) {
 	    case SET:
-	      //std::cerr << "SET(" << cmd.set.value << ")" << std::endl;
 	      value_ = cmd.set.value;
 	      goto CMD;
 	    case SLIDE:
-	      //std::cerr << "SLIDE(" << cmd.slide.target << "," << cmd.slide.time << ")" << std::endl;
 	      length_ = sl::sampleRate()*cmd.slide.time;
 	      increment_ = (cmd.slide.target - value_) / length_;
 	      goto STEP;
 	    case SUSTAIN:
-	      //std::cerr << "SUSTAIN:" << value_ << std::endl;
 	      length_ = -1;
 	      increment_ = 0;
 	      std::fill(buf+i,buf+nframes,value_);
@@ -499,21 +541,34 @@ namespace sl {
       increment_ = 0;
       length_ = 0;
     }
-    void release(SampleCount delay) {
+    void release(int delay) {
       if (length_ == -1) {
+	// we are sustaining the note
+	// advance to next command after `delay' samples
 	length_ = delay;
       }
       else {
+	// look for next sustain command
 	EnvCommandVec::const_iterator pos;
 	for (pos=ip_; pos != commands_.end(); ++pos) {
 	  const EnvCommand &cmd = *pos;
 	  if (cmd.type == SUSTAIN) break;
 	}
 	if (pos != commands_.end()) {
+	  // found: jump to command following it
 	  ip_ = pos+1;
 	  length_ = delay;
 	}
       }
+    }
+    EnvCommand& operator[](const int i) {
+      return commands_[i];
+    }
+    Env& operator=(const Env& other) {
+      if (this != &other) {
+        commands_ = other.commands_;
+      }
+      return *this;
     }
   };
 }

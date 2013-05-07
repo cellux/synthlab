@@ -1,6 +1,6 @@
 VPATH = build
 
-CPPFLAGS = -O3 -I../include
+CPPFLAGS = -O2 -I../include
 LDFLAGS = -ljack
 
 sources := $(wildcard *.cpp)
@@ -8,5 +8,9 @@ sources := $(wildcard *.cpp)
 .PHONY: ALL
 ALL: $(sources:.cpp=)
 
-%: %.cpp ../include/synthlab.h
+%: %.cpp ../include/synthlab.hpp
 	$(CXX) $(CPPFLAGS) -o build/$@ $(LDFLAGS) $<
+
+.PHONY: clean
+clean:
+	rm -f build/*

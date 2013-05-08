@@ -111,8 +111,8 @@ namespace sl {
 
   template <int NCHANNELS>
   class SampleBuffer {
-    Sample *buffers_;
     int stride_;
+    Sample *buffers_;
   public:
     static const int nChannels = NCHANNELS;
     SampleBuffer() :

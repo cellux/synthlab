@@ -79,6 +79,11 @@ namespace sl {
     return 69 + 12*log2(cps/440);
   }
 
+  enum SampleBufferAllocMode {
+    SBAM_STATIC,
+    SBAM_DYNAMIC
+  };
+
   class SampleBufferAllocator {
     class HeapOverFlowError {};
     // increase HEAPSIZE if you get HeapOverFlowError
@@ -87,14 +92,23 @@ namespace sl {
     static Sample *pos;
     static Sample *end;
   public:
-    static Sample* allocate(int nframes) {
-      assert(heap != 0);
-      if ((pos+nframes) > end) {
-	throw HeapOverFlowError();
+    static Sample* allocate(int nframes, SampleBufferAllocMode mode = SBAM_DYNAMIC) {
+      switch (mode) {
+      case SBAM_DYNAMIC:
+        {
+        assert(heap != 0);
+        if ((pos+nframes) > end) {
+          throw HeapOverFlowError();
+        }
+        Sample *here = pos;
+        pos += nframes;
+        return here;
+        }
+      case SBAM_STATIC:
+        {
+        return new Sample[nframes];
+        }
       }
-      Sample *here = pos;
-      pos += nframes;
-      return here;
     }
     static void reset() {
       if (heap == 0) {
@@ -109,15 +123,16 @@ namespace sl {
   Sample* SampleBufferAllocator::pos = 0;
   Sample* SampleBufferAllocator::end = 0;
 
-  template <int NCHANNELS>
+  template <int NCHANNELS=1>
   class SampleBuffer {
     int stride_;
     Sample *buffers_;
   public:
     static const int nChannels = NCHANNELS;
-    SampleBuffer() :
+    SampleBuffer(SampleBufferAllocMode allocMode = SBAM_DYNAMIC) :
       stride_(sl::bufferSize()),
-      buffers_(SampleBufferAllocator::allocate(stride_*NCHANNELS)) {}
+      buffers_(SampleBufferAllocator::allocate(stride_*NCHANNELS, allocMode))
+    {}
     Sample* operator[](const int i) {
       return buffers_+stride_*i;
     }
@@ -169,6 +184,7 @@ namespace sl {
   class NoData {
   public:
     void cc(int num, int value) {}
+    void render(int nframes) {}
   };
 
   template <int NUMINPUTS, int NUMOUTPUTS, class GenData=NoData>
@@ -343,6 +359,7 @@ namespace sl {
       stop();
     }
     void render(int nframes, OutputBuffer &output, InputBuffer &input) {
+      voiceData_.render(nframes);
       output.fill(nframes, 0);
       OutputBuffer o;
       for (int i=0; i<MAXVOICES; i++) {
@@ -394,10 +411,10 @@ namespace sl {
     }
 
   private:
+    AudioProvider<PolySynth> audioProvider_;
     Voice voices_[MAXVOICES];
     VoiceInfo voiceInfo_[MAXVOICES];
     VoiceData voiceData_;
-    AudioProvider<PolySynth> audioProvider_;
   };
 
   class SineOsc : public Gen<0,1> {
@@ -432,6 +449,29 @@ namespace sl {
   };
 
   const float SineOsc::PERIOD = 2*M_PI;
+
+  class SineOsc2 : public Gen<1,1> {
+    static const float PERIOD;
+
+    float phase_;
+    float gain_;
+
+  public:
+    void play(float gain=1, float phase=0) {
+      gain_ = gain;
+      phase_ = PERIOD*phase; // phase must be in [0,1]
+    }
+    void render(int nframes, Sample *freq, Sample *output) {
+      int sr = sl::sampleRate();
+      for (int i=0; i<nframes; i++) {
+	*output++ = gain_*sin(phase_);
+        phase_ += PERIOD / (sr / freq[i]);
+      }
+      phase_ = fmod(phase_, PERIOD);
+    }
+  };
+
+  const float SineOsc2::PERIOD = 2*M_PI;
 
   class Env : public Gen<0,1> {
     enum EnvCommandType {
@@ -576,5 +616,47 @@ namespace sl {
       }
       return *this;
     }
+  };
+
+  class SlidingValue : public Gen<0,1> {
+    Sample value_;
+    Sample increment_;
+    int length_;
+    int slideLength_;
+  public:
+    SlidingValue(Sample value, int slideLength=sl::bufferSize())
+      : value_(value),
+        increment_(0),
+        length_(0),
+        slideLength_(slideLength)
+    {}
+    bool render(int nframes, Sample *output) {
+      if (length_ == 0) {
+        std::fill_n(output, nframes, value_);
+      }
+      else if (length_ >= nframes) {
+        for (int i=0; i<nframes; i++) {
+          output[i] = value_;
+          value_ += increment_;
+        }
+        length_ -= nframes;
+      }
+      else {
+        for (int i=0; i<length_; i++) {
+          output[i] = value_;
+          value_ += increment_;
+        }
+        length_ = 0;
+      }
+      return true;
+    }
+    void setTarget(Sample target) {
+      length_ = slideLength_;
+      increment_ = (target - value_) / length_;
+    }
+    void setSlideLength(int slideLength) {
+      slideLength_ = slideLength;
+    }
+    Sample value() { return value_; }
   };
 }

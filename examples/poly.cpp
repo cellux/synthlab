@@ -2,8 +2,9 @@
 
 struct VoiceData {
   sl::Env env;
-  float pb; // freq multiplier
-  VoiceData() : pb(1.0) {
+  sl::SlidingValue pb;
+  sl::SampleBuffer<1> pb_output;
+  VoiceData() : pb(1.0, sl::sampleRate()), pb_output(sl::SBAM_STATIC) {
     env.add(sl::Env::Set(0));
     env.add(sl::Env::Slide(1.0,0.2));
     env.add(sl::Env::Slide(0.7,0.1));
@@ -31,18 +32,20 @@ struct VoiceData {
       break;
     case 128:
       // pitch bend
-      pb = pow(2,((float)value-0x2000)/8192.0);
+      pb.setTarget(pow(2,((float)value-0x2000)/8192.0));
       break;
     }
+  }
+  void render(int nframes) {
+    pb.render(nframes, pb_output[0]);
   }
 };
 
 class Voice : public sl::Gen<0,2,VoiceData> {
-  sl::SineOsc osc_;
+  sl::SineOsc2 osc_;
   sl::Env env_;
   float gain_;
   float basefreq_;
-  float pb_;
 public:
   void play(int midiNote, int midiVel) {
     // each voice gets its own copy of the shared env
@@ -50,18 +53,16 @@ public:
     // => control changes don't affect voices already playing
     env_ = data_->env;
     basefreq_ = sl::midi2cps(midiNote);
-    pb_ = data_->pb;
-    osc_.play(basefreq_ * pb_);
+    osc_.play();
     env_.play();
     gain_ = midiVel / 127.0;
   }
   bool render(int nframes, OutputBuffer &output, InputBuffer &input) {
-    if (pb_ != data_->pb) {
-      pb_ = data_->pb;
-      osc_.setFreq(basefreq_ * pb_);
-    }
+    sl::SampleBuffer<1> freq;
+    freq.fill(nframes, basefreq_);
+    freq.mul(nframes, data_->pb_output);
     sl::SampleBuffer<1> osc_output;
-    osc_.render(nframes, osc_output[0]);
+    osc_.render(nframes, freq[0], osc_output[0]);
     osc_output.mul(nframes, gain_);
     sl::SampleBuffer<1> env_output;
     bool playing = env_.render(nframes, env_output[0]);

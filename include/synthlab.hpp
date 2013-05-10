@@ -21,13 +21,19 @@ namespace sl {
 
   inline int sampleRate(int sr = 0) {
     static int sr_ = 0;
-    if (sr != 0) sr_ = sr;
+    if (sr != 0 && sr != sr_) {
+      sr_ = sr;
+      std::cout << "sampleRate=" << sr << "\n";
+    }
     return sr_;
   }
 
   inline int bufferSize(int bs = 0) {
     static int bs_ = 0;
-    if (bs != 0) bs_ = bs;
+    if (bs != 0 && bs != bs_) {
+      bs_ = bs;
+      std::cout << "bufferSize=" << bs << "\n";
+    }
     return bs_;
   }
 
@@ -274,20 +280,24 @@ namespace sl {
       if (client_ == NULL) {
 	throw JackClientOpenError();
       }
+      std::cout << "connected to jackd as client `" << name << "`\n";
       sl::sampleRate(jack_get_sample_rate(client_));
       jack_set_sample_rate_callback(client_, jackSampleRateCallback, 0);
       sl::bufferSize(jack_get_buffer_size(client_));
       jack_set_buffer_size_callback(client_, jackBufferSizeCallback, 0);
       jack_set_process_callback(client_, jackProcessCallback, this);
       midiInPort_ = jack_port_register(client_, "midi_in", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
+      std::cout << "registered midi port: midi_in\n";
       char portName[64];
       for (int i=0; i<Synth::InputBuffer::nChannels; i++) {
 	snprintf(portName, sizeof(portName), "in_%u", i+1);
 	inputPorts_[i] = jack_port_register(client_, portName, JACK_DEFAULT_AUDIO_TYPE, JackPortIsInput, 0);
+        std::cout << "registered audio port: " << portName << "\n";
       }
       for (int i=0; i<Synth::OutputBuffer::nChannels; i++) {
 	snprintf(portName, sizeof(portName), "out_%u", i+1);
 	outputPorts_[i] = jack_port_register(client_, portName, JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
+        std::cout << "registered audio port: " << portName << "\n";
       }
       for (int i=0; i<128; i++) {
         midiCtrlMap_[i] = i;

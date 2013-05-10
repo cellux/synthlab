@@ -478,6 +478,15 @@ namespace sl {
 
   const float FMSineOsc::PERIOD = 2*M_PI;
 
+  class Noise : public Gen<0,1> {
+  public:
+    void render(int nframes, Sample *output) {
+      for (int i=0; i<nframes; i++) {
+	*output++ = (random()*2.0/RAND_MAX)-1.0;
+      }
+    }
+  };
+
   class Env : public Gen<0,1> {
     enum EnvCommandType {
       SET,

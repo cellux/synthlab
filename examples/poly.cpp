@@ -42,7 +42,7 @@ struct VoiceData {
 };
 
 class Voice : public sl::Gen<0,2,VoiceData> {
-  sl::SineOsc2 osc_;
+  sl::FMSineOsc osc_;
   sl::Env env_;
   float gain_;
   float basefreq_;

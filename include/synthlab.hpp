@@ -445,7 +445,7 @@ namespace sl {
 
   const float SineOsc::PERIOD = 2*M_PI;
 
-  class SineOsc2 : public Gen<1,1> {
+  class FMSineOsc : public Gen<1,1> {
     static const float PERIOD;
 
     float phase_;
@@ -466,7 +466,7 @@ namespace sl {
     }
   };
 
-  const float SineOsc2::PERIOD = 2*M_PI;
+  const float FMSineOsc::PERIOD = 2*M_PI;
 
   class Env : public Gen<0,1> {
     enum EnvCommandType {

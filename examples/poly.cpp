@@ -3,8 +3,8 @@
 struct VoiceData {
   sl::Env env;
   sl::SlidingValue pb;
-  sl::SampleBuffer<1> pb_output;
-  VoiceData() : pb(1.0, sl::sampleRate()), pb_output(sl::SBAM_STATIC) {
+  sl::StaticSampleBuffer<1> pb_output;
+  VoiceData() : pb(1.0) {
     env.add(sl::Env::Set(0));
     env.add(sl::Env::Slide(1.0,0.2));
     env.add(sl::Env::Slide(0.7,0.1));

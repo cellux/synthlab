@@ -79,10 +79,6 @@ namespace sl {
     return 69 + 12*log2(cps/440);
   }
 
-  enum SampleBufferAllocMode {
-    SBAM_STATIC,
-    SBAM_DYNAMIC
-  };
 
   class SampleBufferAllocator {
     class HeapOverFlowError {};
@@ -92,23 +88,14 @@ namespace sl {
     static Sample *pos;
     static Sample *end;
   public:
-    static Sample* allocate(int nframes, SampleBufferAllocMode mode = SBAM_DYNAMIC) {
-      switch (mode) {
-      case SBAM_DYNAMIC:
-        {
-        assert(heap != 0);
-        if ((pos+nframes) > end) {
-          throw HeapOverFlowError();
-        }
-        Sample *here = pos;
-        pos += nframes;
-        return here;
-        }
-      case SBAM_STATIC:
-        {
-        return new Sample[nframes];
-        }
+    static Sample* allocate(int nframes) {
+      assert(heap != 0);
+      if ((pos+nframes) > end) {
+        throw HeapOverFlowError();
       }
+      Sample *here = pos;
+      pos += nframes;
+      return here;
     }
     static void reset() {
       if (heap == 0) {
@@ -123,15 +110,15 @@ namespace sl {
   Sample* SampleBufferAllocator::pos = 0;
   Sample* SampleBufferAllocator::end = 0;
 
-  template <int NCHANNELS=1>
+  template <int NCHANNELS>
   class SampleBuffer {
     int stride_;
     Sample *buffers_;
   public:
     static const int nChannels = NCHANNELS;
-    SampleBuffer(SampleBufferAllocMode allocMode = SBAM_DYNAMIC) :
-      stride_(sl::bufferSize()),
-      buffers_(SampleBufferAllocator::allocate(stride_*NCHANNELS, allocMode))
+    SampleBuffer(int stride = sl::bufferSize(), Sample *buffers = 0) :
+      stride_(stride),
+      buffers_(buffers == 0 ? SampleBufferAllocator::allocate(stride_*NCHANNELS) : buffers)
     {}
     Sample* operator[](const int i) {
       return buffers_+stride_*i;
@@ -179,6 +166,14 @@ namespace sl {
     void mul(int nframes, const Sample value, int offset=0) {
       transform(nframes, std::bind2nd(std::multiplies<Sample>(), value), offset);
     }
+  };
+
+  template <int NCHANNELS>
+  class StaticSampleBuffer : public SampleBuffer<NCHANNELS> {
+  public:
+    StaticSampleBuffer(int size = sl::bufferSize()) :
+      SampleBuffer<NCHANNELS>(size, new Sample[size*NCHANNELS])
+    {}
   };
 
   class NoData {
